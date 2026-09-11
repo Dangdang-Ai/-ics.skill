@@ -22,13 +22,13 @@ schedule.ics
 
 一个**技能包**（skill）：`SKILL.md` 告诉豆包怎么一步步读图、怎么追问、怎么组装 JSON；`scripts/` 里的 Python 脚本负责生成和校验 `.ics`。豆包工作模式能读写本地文件、能执行 Python，就能完整跑通这条流水线。
 
-和上一版的区别：
+特点：
 
-1. **不再绑定 Codex**：去掉了 `$CODEX_HOME`、沙箱提权这类只对 Codex 成立的说明，改成豆包工作模式里能直接照做的步骤。
-2. **macOS / Windows 双平台**：命令、桌面路径、OCR 兜底脚本都给了两套。
-3. **ICS 规范被写死成硬约束**：模型不许手写 `.ics`，必须由脚本生成，生成后必须过 `validate_ics.py`，不过不许交付。
+1. **macOS / Windows 双平台**：命令、桌面路径、OCR 兜底脚本各一套，两边都能跑。
+2. **ICS 规范是硬约束**：模型不许手写 `.ics`，必须由脚本生成，生成后必须过 `validate_ics.py`，不过不许交付。
+3. **看图靠豆包自己的视觉能力**：OCR 脚本只在看不了图时兜底，不依赖任何外部服务。
 
-## 为什么专门加了「规范校验」
+## 为什么必须有规范校验
 
 模型直接手写 `.ics` 最常见的翻车点：用 `\n` 而不是 CRLF、超长行不折行、`SUMMARY` 里的逗号不转义、`DTSTART` 写成 `2026-09-07 08:00:00`、写了 `TZID` 却没有 `VTIMEZONE`、`DTSTAMP` 不带 `Z`、`UID` 重复导致事件互相覆盖。这些错误往往不报错，只会让日历静默丢事件或直接拒绝导入。
 
@@ -43,7 +43,6 @@ schedule.ics
 ```
 skills/schedule-to-ics/
 ├── SKILL.md                      五步流程 + ICS 规范铁律
-├── agents/openai.yaml            Codex 界面元数据（可选，豆包不用）
 ├── references/
 │   ├── parsing-notes.md          周数、节次、教室写法解析细则
 │   ├── plan-schema.md            plan JSON 字段说明
@@ -61,7 +60,7 @@ skills/schedule-to-ics/
 豆包电脑版各版本的技能入口不完全一样，按你能找到的入口选一种：
 
 1. **导入技能包**：把 `skills/schedule-to-ics` 整个文件夹打包成 zip，在豆包「工作模式 → 技能 / 自定义技能」里导入。
-2. **放到技能目录**：把 `skills/schedule-to-ics` 拷进豆包配置目录下的 skills 目录（结构与 Codex 的 `~/.codex/skills` 一致，`SKILL.md` 顶部带 `name` / `description` 字段）。
+2. **放到技能目录**：把 `skills/schedule-to-ics` 拷进豆包配置目录下的 skills 目录；`SKILL.md` 顶部带 `name` / `description` 字段，豆包靠它识别技能用途。
 3. **临时使用**：让豆包工作模式打开这个文件夹，把 `SKILL.md` 的内容作为工作指令，同时让它按需执行 `scripts/` 里的脚本。
 
 装好后，直接发课表图片，说「把这个课表导入日历」即可触发。

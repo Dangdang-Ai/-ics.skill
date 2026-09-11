@@ -1,4 +1,0 @@
-interface:
-  display_name: "课表转 ICS"
-  short_description: "把教务系统课表照片和作息时间表生成为可导入的 .ics 日历文件"
-  default_prompt: "Use $schedule-to-ics to turn my 教务系统课表截图 into an .ics calendar file."
