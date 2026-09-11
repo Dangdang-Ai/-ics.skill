@@ -1,10 +1,10 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
-"""把课表 plan 转换成 .ics 日历文件。
+"""把课表 plan 转换成 .ics 日历文件（macOS / Windows 通用，只用标准库）。
 
 用法::
 
-    python3 generate_ics.py --plan plan.json --out ~/Desktop/课表.ics
+    python3 generate_ics.py --plan plan.json --out ~/Desktop/schedule.ics
     python3 generate_ics.py --plan plan.json --print
 
 plan JSON 结构::
@@ -30,7 +30,9 @@ plan JSON 结构::
 ``weekday`` 用 1=周一 … 7=周日。``weeks`` 支持 ``1-16``、``1-16(单)``、
 ``1-8,10-16``、``单周``、``3-15(双)`` 等写法。
 
-脚本自己完成：连堂合并、单双周 RRULE、跳过已过去的日期、RFC 5545 折行与转义。
+脚本自己完成：连堂合并、单双周 RRULE、跳过已过去的日期、RFC 5545 折行与转义，
+生成后自动调用同目录的 validate_ics.py 做规范校验，不通过就报错退出（退出码 3），
+避免把不规范的 .ics 交给用户。加 --no-validate 可跳过。
 """
 
 from __future__ import annotations
@@ -42,6 +44,12 @@ import re
 import sys
 from datetime import date, datetime, time, timedelta, timezone
 from pathlib import Path
+
+sys.path.insert(0, str(Path(__file__).resolve().parent))
+try:  # 校验器就在同目录，导入失败时降级为「不校验但不报错」
+    import validate_ics
+except Exception:  # pragma: no cover
+    validate_ics = None
 
 WEEKDAY_CN = ["周一", "周二", "周三", "周四", "周五", "周六", "周日"]
 PARITY = {"单": 1, "双": 0}
@@ -267,6 +275,7 @@ def fold(line: str) -> str:
 
 def vtimezone(tzid: str, offset: str) -> list[str]:
     compact = offset.replace(":", "")
+    tzname = {"+0800": "CST", "+0900": "JST", "+0000": "UTC"}.get(compact, compact)
     return [
         "BEGIN:VTIMEZONE",
         f"TZID:{tzid}",
@@ -275,7 +284,7 @@ def vtimezone(tzid: str, offset: str) -> list[str]:
         "DTSTART:19700101T000000",
         f"TZOFFSETFROM:{compact}",
         f"TZOFFSETTO:{compact}",
-        "TZNAME:CST",
+        f"TZNAME:{tzname}",
         "END:STANDARD",
         "END:VTIMEZONE",
     ]
@@ -515,20 +524,27 @@ def summarize(events, info, out_path) -> str:
 def main(argv=None) -> int:
     parser = argparse.ArgumentParser(description="把课表 plan 转换成 .ics 日历文件")
     parser.add_argument("--plan", required=True, help="plan JSON 文件路径")
-    parser.add_argument("--out", help="输出 .ics 路径，默认 ~/Desktop/课表_<今天>.ics")
+    parser.add_argument("--out", help="输出 .ics 路径，默认桌面上的 schedule.ics")
     parser.add_argument("--print", dest="print_only", action="store_true", help="只打印 ICS 内容，不写文件")
     parser.add_argument("--reminder-minutes", type=int, help="提前提醒分钟数，覆盖 plan 里的设置")
     parser.add_argument("--from-date", help="起始日期 YYYY-MM-DD，默认今天")
     parser.add_argument("--calname", default="课表", help="日历名称")
+    parser.add_argument("--no-validate", dest="validate", action="store_false", help="跳过生成后的规范校验")
     args = parser.parse_args(argv)
 
     plan_path = Path(args.plan).expanduser()
     if not plan_path.is_file():
         raise SystemExit(f"找不到 plan 文件：{plan_path}")
     try:
-        plan = json.loads(plan_path.read_text(encoding="utf-8"))
+        # utf-8-sig：容忍 Windows 编辑器写出的 BOM，避免「JSON 解析失败」这种无头案
+        plan = json.loads(plan_path.read_text(encoding="utf-8-sig"))
     except json.JSONDecodeError as exc:
         raise SystemExit(f"plan JSON 解析失败：{exc}")
+    except UnicodeDecodeError as exc:
+        raise SystemExit(
+            f"plan 文件不是 UTF-8 编码（{exc.reason}）；Windows 上用 Out-File 默认会写成 UTF-16，"
+            f"请另存为 UTF-8 或改用 [System.IO.File]::WriteAllText 写入"
+        )
     if not isinstance(plan, dict):
         raise SystemExit("plan JSON 顶层必须是对象")
     if args.from_date:
@@ -539,6 +555,19 @@ def main(argv=None) -> int:
     events, info = build_events(plan)
     content = build_calendar(events, info, args.calname)
 
+    if args.validate:
+        if validate_ics is None:
+            print("提示：没找到 validate_ics.py，跳过规范校验", file=sys.stderr)
+        else:
+            report, _stats = validate_ics.validate_bytes(content.encode("utf-8"))
+            if report.errors:
+                print("❌ 生成的 ICS 不符合 RFC 5545，已停止交付：", file=sys.stderr)
+                for message in report.errors:
+                    print(f"  • {message}", file=sys.stderr)
+                print("请检查 plan JSON（时间、周数、课程名）后重新生成。", file=sys.stderr)
+                return 3
+            print(f"✅ 规范校验通过（RFC 5545）：{len(events)} 个事件")
+
     if args.print_only:
         sys.stdout.write(content)
         return 0
@@ -548,7 +577,7 @@ def main(argv=None) -> int:
     else:
         desktop = Path.home() / "Desktop"
         base = desktop if desktop.is_dir() else Path.cwd()
-        out_path = base / f"课表_{date.today().isoformat()}.ics"
+        out_path = base / "schedule.ics"
     try:
         out_path.parent.mkdir(parents=True, exist_ok=True)
         out_path.write_text(content, encoding="utf-8", newline="")
